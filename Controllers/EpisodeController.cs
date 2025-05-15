@@ -117,10 +117,8 @@ namespace PodcastTranscribe.API.Controllers
         [HttpPost("{id}/transcription")]
         public async Task<IActionResult> SubmitTranscription(string id)
         {
-            var success = await _episodeService.SubmitTranscriptionAsync(id);
-            return success ? Ok(
-                new { message = $"Transcription job for episode {id} submitted successfully" }
-            ) : BadRequest();
+            var (success, message) = await _episodeService.SubmitTranscriptionAsync(id);
+            return success ? Ok(new { message }) : BadRequest(new { message });
         }
 
         /// <summary>

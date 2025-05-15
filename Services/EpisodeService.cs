@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Threading.Tasks;
+using Microsoft.Extensions.Logging;
 using PodcastTranscribe.API.Models;
 
 namespace PodcastTranscribe.API.Services
@@ -11,6 +12,17 @@ namespace PodcastTranscribe.API.Services
     /// </summary>
     public class EpisodeService : IEpisodeService
     {
+        private readonly ILogger<EpisodeService> _logger;
+        private readonly ITranscriptionSubmissionService _transcriptionSubmissionService;
+
+        public EpisodeService(
+            ILogger<EpisodeService> logger,
+            ITranscriptionSubmissionService transcriptionSubmissionService)
+        {
+            _logger = logger;
+            _transcriptionSubmissionService = transcriptionSubmissionService;
+        }
+
         public Task<IEnumerable<Episode>> SearchEpisodesAsync(string name)
         {
             throw new NotImplementedException();
@@ -21,22 +33,20 @@ namespace PodcastTranscribe.API.Services
             throw new NotImplementedException();
         }
 
-        public async Task<bool> SubmitTranscriptionAsync(string episodeId)
+        public async Task<(bool success, string message)> SubmitTranscriptionAsync(string episodeId)
         {
-            // Simulate checking whether the episode exists
-            if (string.IsNullOrWhiteSpace(episodeId))
+            try
             {
-                return false;
+                _logger.LogInformation($"Submitting transcription for episode {episodeId}");
+                var result = await _transcriptionSubmissionService.ProcessTranscriptionSubmissionAsync(episodeId);
+                return (result.Success, result.Message);
             }
-
-            // Simulate processing delay
-            await Task.Delay(500); // Simulates async processing
-
-            // Log or store transcription job status (in real app, this would be persisted)
-            Console.WriteLine($"Transcription job submitted for episode ID: {episodeId}");
-
-            // Simulate successful submission
-            return true;
+            catch (Exception ex)
+            {
+                var errorMessage = $"Error submitting transcription for episode {episodeId}: {ex.Message}";
+                _logger.LogError(ex, errorMessage);
+                return (false, errorMessage);
+            }
         }
 
         public Task<TranscriptionStatus> GetTranscriptionStatusAsync(string episodeId)

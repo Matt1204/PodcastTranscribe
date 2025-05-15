@@ -28,8 +28,8 @@ namespace PodcastTranscribe.API.Services
         /// Submits a transcription request for an episode.
         /// </summary>
         /// <param name="episodeId">The ID of the episode to transcribe.</param>
-        /// <returns>True if submission was successful, false otherwise.</returns>
-        Task<bool> SubmitTranscriptionAsync(string episodeId);
+        /// <returns>A tuple containing success status and message.</returns>
+        Task<(bool success, string message)> SubmitTranscriptionAsync(string episodeId);
 
         /// <summary>
         /// Gets the current status of a transcription job.

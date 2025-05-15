@@ -3,8 +3,9 @@ using System.Collections.Generic;
 using System.Drawing.Printing;
 using System.Threading.Tasks;
 using Microsoft.Azure.Cosmos;
-using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Options;
 using PodcastTranscribe.API.Models;
+using PodcastTranscribe.API.Configuration;
 
 namespace PodcastTranscribe.API.Services
 {
@@ -13,12 +14,10 @@ namespace PodcastTranscribe.API.Services
         private readonly Container _container;
         private readonly CosmosClient _cosmosClient;
 
-        public CosmosDbService(CosmosClient cosmosClient, IConfiguration configuration)
+        public CosmosDbService(CosmosClient cosmosClient, IOptions<CosmosDbSettings> settings)
         {
             _cosmosClient = cosmosClient;
-            var databaseName = configuration.GetValue<string>("CosmosDb:DatabaseName");
-            var containerName = configuration.GetValue<string>("CosmosDb:ContainerName");
-            _container = _cosmosClient.GetContainer(databaseName, containerName);
+            _container = _cosmosClient.GetContainer(settings.Value.DatabaseName, settings.Value.ContainerName);
         }
 
         public async Task<IEnumerable<Episode>> SearchEpisodesAsync(string name)
