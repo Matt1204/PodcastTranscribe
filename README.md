@@ -1,10 +1,10 @@
-# 🎙️ Podcast Transcription API
+# 🎙️ PodcastTranscribe
 
-> A personal study project demonstrating full-stack development skills using modern cloud technologies and best practices.
+> A personal study project 
 
 ## 📝 Overview
 
-This project is a RESTful API service that converts podcast episodes into text transcriptions. It's designed to showcase my capabilities in building scalable, cloud-native applications using C# and Azure services.
+This is a RESTful API service that converts podcast episodes into text transcriptions.
 
 ### Core Functionalities
 

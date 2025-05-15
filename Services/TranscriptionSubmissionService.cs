@@ -267,8 +267,7 @@ namespace PodcastTranscribe.API.Services
             // uploading the file to blob storage, use audioUrl as the file name
 
             var timestamp = DateTime.Now.ToString("HH-mm-ss");
-            // var blobFileName = $"{episodeId}_{timestamp}.mp3";
-            var blobFileName = $"{episodeId}.mp3";
+            var blobFileName = $"{episodeId}_{timestamp}.mp3";
             var blobUrl = await _azureBlobStorageService.UploadFileAsync(fileStream, blobFileName);
             // returning the blob url
             return blobUrl.ToString();
