@@ -17,9 +17,9 @@ This is a RESTful API service that converts podcast episodes into text transcrip
 ## 🛠️ Technology Stack
 
 ### Backend Development
-- **Language**: C# 10
-- **Framework**: ASP.NET Core 7.0
-- **Architecture**: RESTful API with Clean Architecture principles
+- **Language**: C#
+- **Framework**: ASP.NET Core 9.0
+- **API**: RESTful API
 - **Dependency Injection**: Built-in .NET Core DI container
 - **API Documentation**: Swagger/OpenAPI
 
@@ -33,34 +33,8 @@ This is a RESTful API service that converts podcast episodes into text transcrip
 - **Version Control**: Git
 - **CI/CD**: GitHub Actions
 - **Containerization**: Docker
-- **Infrastructure as Code**: Azure Resource Manager (ARM) templates
-- **Monitoring**: Azure Application Insights
 - **Logging**: Structured logging with ILogger
 
-### Development Tools & Practices
-- **Code Quality**: 
-  - SonarQube for code analysis
-  - StyleCop for code style enforcement
-- **Testing**:
-  - xUnit for unit testing
-  - Moq for mocking
-- **API Testing**: Postman
-- **Documentation**: Markdown
-
-## 🚀 Getting Started
-
-> Note: This project is for educational purposes only and is not intended for production use.
-
-### Prerequisites
-- .NET 7.0 SDK
-- Azure subscription (for cloud services)
-- Docker (optional, for containerization)
-
-### Local Development Setup
-1. Clone the repository
-2. Configure Azure services and update connection strings
-3. Run the application locally
-4. Access the Swagger UI at `https://localhost:5050/swagger`
 
 ## 📚 Project Structure
 
@@ -73,26 +47,8 @@ PodcastTranscribe.API/
 └── Program.cs        # Application entry point
 ```
 
-## 🔒 Security & Best Practices
-
-- Secure configuration management
-- Input validation and sanitization
-- Proper error handling and logging
-- Rate limiting and request throttling
-- Azure Key Vault integration for secrets
-
 ## 🎯 Future Enhancements
 
 - Real-time transcription status updates using SignalR
 - Batch processing capabilities
-- Advanced audio processing features
 - User authentication and authorization
-- Multi-language support
-
-## 📄 License
-
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
-
----
-
-*This project is created for educational purposes to demonstrate my technical skills in full-stack development, cloud architecture, and DevOps practices.* 
