@@ -37,6 +37,7 @@ namespace PodcastTranscribe.API.Controllers
         [HttpPost("test_db")]
         public async Task<IActionResult> TestDb([FromBody] Episode episode)
         {
+            _logger.LogInformation("test_db endpoint called !!!!!!!!!");
             try
             {
                 _logger.LogInformation($"Received episode title: {episode.Title}");
@@ -55,16 +56,16 @@ namespace PodcastTranscribe.API.Controllers
                 var createdEpisode = await _cosmosDbService.CreateEpisodeAsync(episode);
                 _logger.LogInformation("!!!!! Created episode: {@Episode}", createdEpisode);
                 _logger.LogInformation($"!!!!! Episode status: {createdEpisode.TranscriptionStatus}");
-                
+
                 // Read
                 // var retrievedEpisode = await _cosmosDbService.GetEpisodeByIdAsync(createdEpisode.Id);
                 // _logger.LogInformation("!!!!!Retrieved episode: {@Episode}", retrievedEpisode);
-                
+
                 // // Update
                 // retrievedEpisode.title = "Updated Title";
                 // var updatedEpisode = await _cosmosDbService.UpdateEpisodeAsync(retrievedEpisode);
                 // _logger.LogInformation("Updated episode: {@Episode}", updatedEpisode);
-                
+
                 // // Search
                 // var searchResults = await _cosmosDbService.SearchEpisodesAsync(episode.title);
                 // _logger.LogInformation("Search results: {@Results}", searchResults);
@@ -95,6 +96,7 @@ namespace PodcastTranscribe.API.Controllers
         [HttpGet("hello")]
         public IActionResult HelloWorld()
         {
+            _logger.LogInformation("HelloWorld endpoint called !!!!!!!!!!");
             return Ok(new { message = "Hello from Podcast Transcribe API!" });
         }
 
@@ -145,8 +147,8 @@ namespace PodcastTranscribe.API.Controllers
             {
                 return NotFound(new { message = $"Episode {id} not found" });
             }
-            var status = await _azureSpeechHandlerService.GetTranscriptionStatusAsync(id);
-            return Ok(new { status });
+            TranscriptionResultResponse response = await _episodeService.GetTranscriptionResultAsync(id);
+            return Ok(response);
         }
     }
 } 

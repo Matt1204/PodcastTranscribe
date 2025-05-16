@@ -7,6 +7,7 @@ using PodcastTranscribe.API.Models;
 using PodcastTranscribe.API.Services;
 using Microsoft.OpenApi.Models;
 using PodcastTranscribe.API.Configuration;
+using Newtonsoft.Json.Converters;
 
 
 // Dependency Injection (DI) in ASP.NET Core:
@@ -20,6 +21,14 @@ using PodcastTranscribe.API.Configuration;
 
 
 var builder = WebApplication.CreateBuilder(args);
+
+builder.Services
+    .AddControllers()
+    .AddNewtonsoftJson(options =>
+    {
+        // if you need any special converters, add them here:
+        options.SerializerSettings.Converters.Add(new StringEnumConverter());
+    });
 
 // Add services to the container.
 // EpisodeController is inherited from ControllerBase, which marks it as a "controller"

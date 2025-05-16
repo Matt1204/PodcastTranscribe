@@ -6,8 +6,8 @@ namespace PodcastTranscribe.API.Services
     public interface IAzureSpeechHandlerService
     {
         Task<string> SubmitTranscriptionToAzureAsync(string blobUrl, string episodeId);
-        Task<string> GetTranscriptionStatusAsync(string transcriptionId);
+        Task<string> syncTranscriptionStatusAsync(string transcriptionId);
         // Task<string> GetTranscriptionResultAsync(string transcriptionId);
-        Task<bool> GetTranscriptionResultAsync(Episode episode, string azureSpeechUri);
+        Task<bool> UpdateTranscriptionResultAsync(Episode episode, string azureSpeechUri);
     }
 }

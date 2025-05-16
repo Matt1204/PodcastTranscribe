@@ -12,12 +12,12 @@ namespace PodcastTranscribe.API.Services
 {
     public class CosmosDbService
     {
-        private readonly Container _container;
+        private readonly Container _dbContainer;
         private readonly ILogger<CosmosDbService> _logger;
 
         public CosmosDbService(CosmosClient cosmosClient, IOptions<CosmosDbSettings> settings, ILogger<CosmosDbService> logger)
         {
-            _container = cosmosClient.GetContainer(settings.Value.DatabaseName, settings.Value.ContainerName);
+            _dbContainer = cosmosClient.GetContainer(settings.Value.DatabaseName, settings.Value.ContainerName);
             _logger = logger;
         }
 
@@ -31,7 +31,7 @@ namespace PodcastTranscribe.API.Services
                 .WithParameter("@name", name.ToUpperInvariant());
 
             var results = new List<Episode>();
-            using var iterator = _container.GetItemQueryIterator<Episode>(query);
+            using var iterator = _dbContainer.GetItemQueryIterator<Episode>(query);
 
             while (iterator.HasMoreResults)
             {
@@ -46,7 +46,7 @@ namespace PodcastTranscribe.API.Services
         {
             try
             {
-                var response = await _container.ReadItemAsync<Episode>(id, new PartitionKey(id));
+                var response = await _dbContainer.ReadItemAsync<Episode>(id, new PartitionKey(id));
                 return response.Resource;
             }
             catch (CosmosException ex) when (ex.StatusCode == System.Net.HttpStatusCode.NotFound)
@@ -62,7 +62,7 @@ namespace PodcastTranscribe.API.Services
 
             try
             {
-                var response = await _container.UpsertItemAsync(
+                var response = await _dbContainer.UpsertItemAsync(
                     episode,
                     new PartitionKey(episode.Id),
                     new ItemRequestOptions { EnableContentResponseOnWrite = true });
@@ -86,7 +86,7 @@ namespace PodcastTranscribe.API.Services
             try
             {
                 var partitionKey = new PartitionKey(episode.Id);
-                var response = await _container.CreateItemAsync(
+                var response = await _dbContainer.CreateItemAsync(
                     episode,
                     partitionKey,
                     new ItemRequestOptions { EnableContentResponseOnWrite = true });

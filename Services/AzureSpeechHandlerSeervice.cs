@@ -83,7 +83,7 @@ namespace PodcastTranscribe.API.Services
             }
         }
 
-        public async Task<string> GetTranscriptionStatusAsync(string episodeId)
+        public async Task<string> syncTranscriptionStatusAsync(string episodeId)
         {
 
             Episode? episode = await _cosmosDbService.GetEpisodeByIdAsync(episodeId);
@@ -124,8 +124,8 @@ namespace PodcastTranscribe.API.Services
                     }
                     else if (status == "Succeeded")
                     {
+                        await this.UpdateTranscriptionResultAsync(episode, jsonDoc.GetProperty("self").GetString());
                         await _cosmosDbService.UpdateEpisodeEntryAsync(episodeId, transcriptionStatus: TranscriptionStatus.TranscriptionSucceeded);
-                        await this.GetTranscriptionResultAsync(episode, jsonDoc.GetProperty("self").GetString());
                     }
                     else if (status == "Failed")
                     {
@@ -153,18 +153,13 @@ namespace PodcastTranscribe.API.Services
             }
         }
 
-        // private async Task<bool> retrieveTranscriptionStatusList(string episodeId){
-        //     return true;
-        // }
 
-
-        public async Task<bool> GetTranscriptionResultAsync(Episode episode, string azureSpeechUri)
+        public async Task<bool> UpdateTranscriptionResultAsync(Episode episode, string azureSpeechUri)
         {
             if (episode == null || string.IsNullOrEmpty(azureSpeechUri))
             {
                 throw new ArgumentNullException("Episode or Azure Speech URI cannot be null");
             }
-
 
             string transcriptionResultUrl = $"{azureSpeechUri}/files";
             var response = await _httpClient.GetAsync(transcriptionResultUrl);
@@ -177,19 +172,19 @@ namespace PodcastTranscribe.API.Services
 
             var jsonResponse = await response.Content.ReadAsStringAsync();
             var jsonDoc = JsonSerializer.Deserialize<JsonElement>(jsonResponse);
-            if (jsonDoc.TryGetProperty("values", out JsonElement valuesElement))
+            if (jsonDoc.TryGetProperty("values", out JsonElement valuesEntry))
             {
-                foreach (var value in valuesElement.EnumerateArray())
+                foreach (var value in valuesEntry.EnumerateArray())
                 {
                     if (value.TryGetProperty("kind", out JsonElement kindEntry) && kindEntry.GetString() == "Transcription")
                     {
                         value.TryGetProperty("links", out JsonElement linksEntry);
-                        if (linksEntry.TryGetProperty("contentUrl", out JsonElement resultEntry))
+                        if (linksEntry.TryGetProperty("contentUrl", out JsonElement contentUrlEntry))
                         {
-                            var contentUrl = resultEntry.GetString();
-                            _logger.LogInformation($"Transcription result response: {jsonResponse}");
-                            _logger.LogInformation($"*** Transcription result URL: {contentUrl}");
-                            string displayContent = await this.GetTranscriptionContentAsync(contentUrl);
+                            var textContentUrl = contentUrlEntry.GetString();
+                            // _logger.LogInformation($"Transcription result response: {jsonResponse}");
+                            // _logger.LogInformation($"*** Transcription result URL: {contentUrl}");
+                            string displayContent = await this.GetTranscriptionContentAsync(textContentUrl);
                             await _cosmosDbService.UpdateEpisodeEntryAsync(episodeId: episode.Id, transcriptionResultDisplay: displayContent);
 
                             return true;
@@ -206,9 +201,9 @@ namespace PodcastTranscribe.API.Services
             return false;
         }
 
-        private async Task<string> GetTranscriptionContentAsync(string transcriptionResultUrl)
+        private async Task<string> GetTranscriptionContentAsync(string textContentUrl)
         {
-            var response = await _httpClient.GetAsync(transcriptionResultUrl);
+            var response = await _httpClient.GetAsync(textContentUrl);
             if (!response.IsSuccessStatusCode)
             {
                 var errorMsg = $"Failed to get transcription content. Status code: {response.StatusCode}, Reason: {response.ReasonPhrase}";
@@ -222,11 +217,9 @@ namespace PodcastTranscribe.API.Services
             // Process the content as needed
             // get contentEntry.combinedRecognizedPhrases[0].display
             jsonDoc.TryGetProperty("combinedRecognizedPhrases", out JsonElement combinedRecognizedPhrasesEntry);
-            var displayContent = combinedRecognizedPhrasesEntry.EnumerateArray().First().GetProperty("display").GetString();
-            _logger.LogInformation($"Transcription content: {displayContent}");
-            return displayContent;
-
-
+            var displayTextContent = combinedRecognizedPhrasesEntry.EnumerateArray().First().GetProperty("display").GetString();
+            _logger.LogInformation($"Transcription content: {displayTextContent}");
+            return displayTextContent;
         }
 
     }

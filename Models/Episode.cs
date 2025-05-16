@@ -1,6 +1,7 @@
 using System;
-using System.Text.Json.Serialization;
+// using System.Text.Json.Serialization;
 using Newtonsoft.Json;
+using Newtonsoft.Json.Converters;
 
 namespace PodcastTranscribe.API.Models
 {
@@ -39,7 +40,7 @@ namespace PodcastTranscribe.API.Models
         /// Status of the transcription process
         /// </summary>
         [JsonProperty("transcription_status")]
-        [Newtonsoft.Json.JsonConverter(typeof(Newtonsoft.Json.Converters.StringEnumConverter))]
+        [JsonConverter(typeof(Newtonsoft.Json.Converters.StringEnumConverter))]
         public TranscriptionStatus TranscriptionStatus { get; set; }
 
         /// <summary>

@@ -36,6 +36,6 @@ namespace PodcastTranscribe.API.Services
         /// </summary>
         /// <param name="episodeId">The ID of the episode.</param>
         /// <returns>The current transcription status.</returns>
-        Task<TranscriptionStatus> GetTranscriptionStatusAsync(string episodeId);
+        Task<TranscriptionResultResponse> GetTranscriptionResultAsync(string episodeId);
     }
 } 
