@@ -56,12 +56,14 @@ builder.Services.AddSingleton<IAzureBlobStorageService, AzureBlobStorageService>
 // 1 instance per HTTP request.
 builder.Services.AddScoped<IEpisodeService, EpisodeService>();
 builder.Services.AddScoped<ITranscriptionSubmissionService, TranscriptionSubmissionService>();
-
+builder.Services.AddScoped<IAzureSpeechHandlerService, AzureSpeechHandlerService>();
 // Add configuration sections
 builder.Services.Configure<CosmosDbSettings>(
     builder.Configuration.GetSection("CosmosDb"));
 builder.Services.Configure<AzureBlobStorageSettings>(
     builder.Configuration.GetSection("AzureBlobStorage"));
+builder.Services.Configure<AzureSpeechSettings>(
+    builder.Configuration.GetSection("AzureSpeech"));
 
 
 

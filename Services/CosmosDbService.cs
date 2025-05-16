@@ -1,38 +1,42 @@
 using System;
 using System.Collections.Generic;
-using System.Drawing.Printing;
 using System.Threading.Tasks;
 using Microsoft.Azure.Cosmos;
 using Microsoft.Extensions.Options;
 using PodcastTranscribe.API.Models;
 using PodcastTranscribe.API.Configuration;
+using Newtonsoft.Json;
+using Microsoft.Extensions.Logging;
 
 namespace PodcastTranscribe.API.Services
 {
     public class CosmosDbService
     {
         private readonly Container _container;
-        private readonly CosmosClient _cosmosClient;
+        private readonly ILogger<CosmosDbService> _logger;
 
-        public CosmosDbService(CosmosClient cosmosClient, IOptions<CosmosDbSettings> settings)
+        public CosmosDbService(CosmosClient cosmosClient, IOptions<CosmosDbSettings> settings, ILogger<CosmosDbService> logger)
         {
-            _cosmosClient = cosmosClient;
-            _container = _cosmosClient.GetContainer(settings.Value.DatabaseName, settings.Value.ContainerName);
+            _container = cosmosClient.GetContainer(settings.Value.DatabaseName, settings.Value.ContainerName);
+            _logger = logger;
         }
 
-        public async Task<IEnumerable<Episode>> SearchEpisodesAsync(string name)
+        public async Task<List<Episode>> SearchEpisodesAsync(string name)
         {
+            if (string.IsNullOrWhiteSpace(name))
+                return new List<Episode>();
+
             var query = new QueryDefinition(
-                "SELECT * FROM c WHERE CONTAINS(c.title, @name)")
-                .WithParameter("@name", name);
+                "SELECT * FROM c WHERE CONTAINS(UPPER(c.title), @name)")
+                .WithParameter("@name", name.ToUpperInvariant());
 
             var results = new List<Episode>();
-            var queryResultSetIterator = _container.GetItemQueryIterator<Episode>(query);
+            using var iterator = _container.GetItemQueryIterator<Episode>(query);
 
-            while (queryResultSetIterator.HasMoreResults)
+            while (iterator.HasMoreResults)
             {
-                var currentResultSet = await queryResultSetIterator.ReadNextAsync();
-                results.AddRange(currentResultSet);
+                var response = await iterator.ReadNextAsync();
+                results.AddRange(response.Resource);
             }
 
             return results;
@@ -53,62 +57,86 @@ namespace PodcastTranscribe.API.Services
 
         public async Task<Episode> UpdateEpisodeAsync(Episode episode)
         {
+            if (string.IsNullOrEmpty(episode.Id))
+                throw new ArgumentException("Episode ID is required");
+
             try
             {
-                if (string.IsNullOrEmpty(episode.Id))
-                {
-                    throw new ArgumentException("Episode ID is required");
-                }
-
                 var response = await _container.UpsertItemAsync(
                     episode,
                     new PartitionKey(episode.Id),
-                    new ItemRequestOptions
-                    {
-                        EnableContentResponseOnWrite = true
-                    }
-                );
+                    new ItemRequestOptions { EnableContentResponseOnWrite = true });
                 return response.Resource;
             }
             catch (CosmosException ex)
             {
-                throw new Exception($"Cosmos DB error: {ex.Message}", ex);
+                _logger.LogError(ex, "Cosmos DB error on update");
+                throw;
             }
         }
 
         public async Task<Episode> CreateEpisodeAsync(Episode episode)
         {
+            if (string.IsNullOrEmpty(episode.Id))
+                episode.Id = "episode-" + Guid.NewGuid();
+
+            _logger.LogInformation($"Creating episode with ID: {episode.Id}");
+            _logger.LogDebug(JsonConvert.SerializeObject(episode));
+
             try
             {
-                // Generate a new ID if not provided
-                if (string.IsNullOrEmpty(episode.Id))
-                {
-                    episode.Id = "episode-" + Guid.NewGuid().ToString();
-                }
-                Console.WriteLine($"!!!!!!!! Creating episode with ID: {episode.Id}");
-                // print episode object
-                Console.WriteLine(episode.ToString());
-
-                // Ensure the partition key is set
                 var partitionKey = new PartitionKey(episode.Id);
-
-                // Create the document in Cosmos DB
                 var response = await _container.CreateItemAsync(
                     episode,
                     partitionKey,
-                    new ItemRequestOptions
-                    {
-                        EnableContentResponseOnWrite = true
-                    }
-                );
+                    new ItemRequestOptions { EnableContentResponseOnWrite = true });
 
-                Console.WriteLine($"Successfully created episode with ID: {response.Resource.Id}");
+                _logger.LogInformation($"Successfully created episode with ID: {response.Resource.Id}");
                 return response.Resource;
             }
             catch (CosmosException ex)
             {
-                throw new Exception($"Failed to create episode in Cosmos DB: {ex.Message}", ex);
+                _logger.LogError(ex, "Failed to create episode in Cosmos DB");
+                throw;
             }
+        }
+
+        public async Task<Episode> UpdateEpisodeEntryAsync(
+            string episodeId,
+            string? transcriptionResultDisplay = null,
+            string? processedAudioBlobUri = null,
+            string? azureSpeechUri = null,
+            TranscriptionStatus? transcriptionStatus = null)
+        {
+            var episode = await GetEpisodeByIdAsync(episodeId)
+                ?? throw new Exception($"Episode {episodeId} not found");
+
+            var updates = new List<string>();
+
+            if (transcriptionResultDisplay != null)
+            {
+                episode.TranscriptionResultDisplay = transcriptionResultDisplay;
+                updates.Add($"transcriptionResultDisplay: {transcriptionResultDisplay}");
+            }
+            if (processedAudioBlobUri != null)
+            {
+                episode.ProcessedAudioBlobUri = processedAudioBlobUri;
+                updates.Add($"processedAudioBlobUri: {processedAudioBlobUri}");
+            }
+            if (azureSpeechUri != null)
+            {
+                episode.AzureSpeechURI = azureSpeechUri;
+                updates.Add($"azureSpeechUri: {azureSpeechUri}");
+            }
+            if (transcriptionStatus != null)
+            {
+                episode.TranscriptionStatus = transcriptionStatus.Value;
+                updates.Add($"transcriptionStatus: {transcriptionStatus.Value}");
+            }
+
+            _logger.LogInformation($"Updating episode with ID: {episodeId}. Updates: {string.Join(", ", updates)}");
+
+            return await UpdateEpisodeAsync(episode);
         }
     }
 }

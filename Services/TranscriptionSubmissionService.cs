@@ -8,6 +8,11 @@ using Xabe.FFmpeg;
 using Xabe.FFmpeg;
 using Xabe.FFmpeg.Streams;
 using System.Net.Http.Headers;
+using System.Text.Json;
+using Microsoft.Extensions.Options;
+using PodcastTranscribe.API.Configuration;
+using System.Net.Http;
+using System.Text;
 
 namespace PodcastTranscribe.API.Services
 {
@@ -23,10 +28,15 @@ namespace PodcastTranscribe.API.Services
         private readonly CosmosDbService _cosmosDbService;
         private readonly IAzureBlobStorageService _azureBlobStorageService;
         private readonly string _debugDirectory;
+        private readonly AzureSpeechSettings _azureSpeechSettings;
+        private readonly HttpClient _httpClient;
+        private readonly IAzureSpeechHandlerService _azureSpeechHandlerService;
         public TranscriptionSubmissionService(
             ILogger<TranscriptionSubmissionService> logger,
             CosmosDbService cosmosDbService,
-            IAzureBlobStorageService azureBlobStorageService
+            IAzureBlobStorageService azureBlobStorageService,
+            IOptions<AzureSpeechSettings> azureSpeechSettings,
+            IAzureSpeechHandlerService azureSpeechHandlerService
         )
         {
             _logger = logger;
@@ -34,80 +44,58 @@ namespace PodcastTranscribe.API.Services
             _debugDirectory = Path.Combine(Directory.GetCurrentDirectory(), "DebugAudio");
             Directory.CreateDirectory(_debugDirectory);
             _azureBlobStorageService = azureBlobStorageService;
+            _azureSpeechSettings = azureSpeechSettings.Value;
+            _httpClient = new HttpClient();
+            _azureSpeechHandlerService = azureSpeechHandlerService;
         }
 
         /// <summary>
         /// Master function to handle the complete transcription submission workflow
         /// </summary>
-        /// <param name="episodeId">The ID of the episode to process</param>
+        /// <param name="audioUrl">The ID of the episode to process</param>
         /// <returns>A result containing success status and message</returns>
-        public async Task<TranscriptionSubmissionResult> ProcessTranscriptionSubmissionAsync(string episodeId)
+        public async Task<(bool isSuccess, string message)> ProcessTranscriptionSubmissionAsync(Episode episode)
         {
             string audioFilePath = null;
             string processedAudioPath = null;
 
             try
             {
-                _logger.LogInformation($"Starting transcription submission process for episode {episodeId}");
+                _logger.LogInformation($"*** Starting transcription submission process for episode {episode.Id}");
 
-                // Step 1: Get episode details from CosmosDB
-                var episode = await _cosmosDbService.GetEpisodeByIdAsync(episodeId);
-                if (episode == null)
-                {
-                    var errorMessage = $"Episode {episodeId} not found in database";
-                    _logger.LogError(errorMessage);
-                    return new TranscriptionSubmissionResult 
-                    { 
-                        Success = false, 
-                        Message = errorMessage 
-                    };
-                }
-
-                // Step 2: Download audio file
+                // Step 1: Download audio file
                 audioFilePath = await DownloadAudioFileAsync(episode.AudioUrl);
                 if (string.IsNullOrEmpty(audioFilePath))
                 {
-                    var errorMessage = $"Failed to download audio for episode {episodeId}";
+                    var errorMessage = $"*** Failed to download audio for episode {episode.Id}";
                     _logger.LogError(errorMessage);
-                    return new TranscriptionSubmissionResult 
-                    { 
-                        Success = false, 
-                        Message = errorMessage 
-                    };
+                    return (false, errorMessage);
                 }
 
-                // Step 3: Process audio file (reduce bitrate)
+                // Step 2: Process audio file (reduce bitrate)
                 processedAudioPath = await ProcessAudioFileAsync(audioFilePath);
                 if (string.IsNullOrEmpty(processedAudioPath))
                 {
-                    var errorMessage = $"Failed to process audio for episode {episodeId}";
+                    var errorMessage = $"*** Failed to process audio for episode {episode.Id}";
                     _logger.LogError(errorMessage);
-                    return new TranscriptionSubmissionResult 
-                    { 
-                        Success = false, 
-                        Message = errorMessage 
-                    };
+                    return (false, errorMessage);
                 }
 
-                // Step 4: Upload to Azure Blob Storage (to be implemented)
+                // Step 3: Upload audio to Azure Blob Storage (to be implemented)
                 // TODO: Implement blob storage upload
                 var blobUrl = await UploadToBlobStorageAsync(processedAudioPath, episode.Id);
-                // _logger.LogInformation($"Successfully completed transcription submission process for episode {episodeId}");
-                return new TranscriptionSubmissionResult 
-                { 
-                    Success = true, 
-                    Message = "Transcription submitted successfully. Please check back later for results." 
-                };
+
+                // Step 4: Submit transcription to Azure Speech Service
+                // var transcriptionUrl = await SubmitTranscriptionToAzureAsync(blobUrl, episode.Id);
+                var transcriptionUrl = await _azureSpeechHandlerService.SubmitTranscriptionToAzureAsync(blobUrl, episode.Id);
+
+                return (true, "Transcription task submitted");
             }
             catch (Exception ex)
             {
-                var errorMessage = $"Error processing transcription submission for episode {episodeId}: {ex.Message}";
+                var errorMessage = $"Error processing transcription submission for episode {episode.Id}: {ex.Message}";
                 _logger.LogError(ex, errorMessage);
-                return new TranscriptionSubmissionResult 
-                { 
-                    Success = false, 
-                    Message = errorMessage 
-                };
+                return (false, errorMessage);
             }
             finally
             {
@@ -132,8 +120,8 @@ namespace PodcastTranscribe.API.Services
                     // Set a browser-like User-Agent header to avoid 403 Forbidden
                     client.DefaultRequestHeaders.UserAgent.ParseAdd("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/113.0.0.0 Safari/537.36");
 
-                    // Request only the first 15 MB of the file
-                    var maxBytes = 30 * 1024 * 1024;
+                    // Request only the first 10 MB of the file
+                    var maxBytes = 10 * 1024 * 1024;
                     client.DefaultRequestHeaders.Range = new RangeHeaderValue(0, maxBytes - 1);
 
                     // Get file size first
@@ -266,15 +254,70 @@ namespace PodcastTranscribe.API.Services
             var fileStream = File.OpenRead(filePath);
             // uploading the file to blob storage, use audioUrl as the file name
 
-            var timestamp = DateTime.Now.ToString("HH-mm-ss");
-            var blobFileName = $"{episodeId}_{timestamp}.mp3";
+            var blobFileName = $"{episodeId}_audio.mp3";
             var blobUrl = await _azureBlobStorageService.UploadFileAsync(fileStream, blobFileName);
             // returning the blob url
             return blobUrl.ToString();
-            // var blobUrl = await _azureBlobStorageService.UploadFileAsync(fileStream, Path.GetFileName(filePath));
-            // return blobUrl.ToString();
+            
         }
 
+        private async Task<string> SubmitTranscriptionToAzureAsync(string blobAudioURL, string episodeId)
+        {
+            try
+            {
+                var requestUrl = $"https://{_azureSpeechSettings.Region}.api.cognitive.microsoft.com/speechtotext/{_azureSpeechSettings.ApiVersion}/transcriptions";
+                // var requestUrl = "https://eastus.api.cognitive.microsoft.com/speechtotext/v3.2/transcriptions";
+
+                _logger.LogInformation($"URL: {requestUrl}");
+                var requestBody = new
+                {
+                    displayName = $"{episodeId}-transcription",
+                    locale = "en-US",
+                    contentUrls = new[] { blobAudioURL },
+                    // model = (string)null,
+                    properties = new
+                    {
+                        wordLevelTimestampsEnabled = false,
+                        languageIdentification = new
+                        {
+                            candidateLocales = new[] { "zh-CN", "en-US" }
+                        }
+                    }
+                };
+
+
+                var jsonContent = JsonSerializer.Serialize(requestBody);
+                var content = new StringContent(jsonContent, Encoding.UTF8, "application/json");
+
+                // _httpClient.DefaultRequestHeaders.Clear();
+                _httpClient.DefaultRequestHeaders.Add("Ocp-Apim-Subscription-Key", _azureSpeechSettings.SubscriptionKey);
+                // _httpClient.DefaultRequestHeaders.Add("Content-Type", "application/json");
+                _logger.LogInformation($"subscription key: {_azureSpeechSettings.SubscriptionKey}");
+                var response = await _httpClient.PostAsync(requestUrl, content);
+                if(!response.IsSuccessStatusCode){
+                    var statusCode = response.StatusCode;
+                    var errorMessage = $"**** Failed to submit transcription to Azure Speech Service: {response.ReasonPhrase}, status code: {statusCode}";
+                    _logger.LogError(errorMessage);
+                    throw new Exception(errorMessage);
+                }
+
+
+                var resJsonStr = await response.Content.ReadAsStringAsync();
+                var resBody = JsonSerializer.Deserialize<JsonElement>(resJsonStr);
+                
+                // Extract the self URL from the response which contains the transcription ID
+                var selfUrl = resBody.GetProperty("self").GetString();
+                
+                _logger.LogInformation($"!!! Successfully submitted transcription request. Self URL: {selfUrl}");
+                
+                return selfUrl;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to submit transcription to Azure Speech Service");
+                throw;
+            }
+        }
         private void CleanupTemporaryFiles(params string[] filePaths)
         {
             foreach (var path in filePaths)

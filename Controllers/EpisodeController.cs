@@ -18,15 +18,17 @@ namespace PodcastTranscribe.API.Controllers
         private readonly ILogger<EpisodeController> _logger;
         private readonly IEpisodeService _episodeService;
         private readonly CosmosDbService _cosmosDbService;
-
+        private readonly IAzureSpeechHandlerService _azureSpeechHandlerService;
         public EpisodeController(
             ILogger<EpisodeController> logger,
             IEpisodeService episodeService,
-            CosmosDbService cosmosDbService)
+            CosmosDbService cosmosDbService,
+            IAzureSpeechHandlerService azureSpeechHandlerService)
         {
             _logger = logger;
             _episodeService = episodeService;
             _cosmosDbService = cosmosDbService;
+            _azureSpeechHandlerService = azureSpeechHandlerService;
         }
 
         /// <summary>
@@ -37,27 +39,26 @@ namespace PodcastTranscribe.API.Controllers
         {
             try
             {
-                _logger.LogInformation($"Received episode data: {episode.Title}");
+                _logger.LogInformation($"Received episode title: {episode.Title}");
 
                 // Generate a unique ID if not provided
                 if (string.IsNullOrEmpty(episode.Id))
                 {
-                    episode.Id = $"episode-{Guid.NewGuid().ToString("N").Substring(0, 8)}";
+                    episode.Id = $"{Guid.NewGuid().ToString("N").Substring(0, 8)}";
                 }
+                _logger.LogInformation($"!!!!! Episode status: {episode.TranscriptionStatus}");
 
-                // Set default values if not provided
-                if (episode.TranscriptionStatus == 0) // Default enum value, for test only
-                {
-                    episode.TranscriptionStatus = TranscriptionStatus.NotStarted;
-                }
+                // episode.TranscriptionStatus = TranscriptionStatus.TranscriptionSubmitted;
+                _logger.LogInformation($"!!!!! Episode status: {episode.TranscriptionStatus}");
 
                 // Create
                 var createdEpisode = await _cosmosDbService.CreateEpisodeAsync(episode);
                 _logger.LogInformation("!!!!! Created episode: {@Episode}", createdEpisode);
+                _logger.LogInformation($"!!!!! Episode status: {createdEpisode.TranscriptionStatus}");
                 
                 // Read
-                var retrievedEpisode = await _cosmosDbService.GetEpisodeByIdAsync(createdEpisode.Id);
-                _logger.LogInformation("!!!!!Retrieved episode: {@Episode}", retrievedEpisode);
+                // var retrievedEpisode = await _cosmosDbService.GetEpisodeByIdAsync(createdEpisode.Id);
+                // _logger.LogInformation("!!!!!Retrieved episode: {@Episode}", retrievedEpisode);
                 
                 // // Update
                 // retrievedEpisode.title = "Updated Title";
@@ -117,8 +118,14 @@ namespace PodcastTranscribe.API.Controllers
         [HttpPost("{id}/transcription")]
         public async Task<IActionResult> SubmitTranscription(string id)
         {
-            var (success, message) = await _episodeService.SubmitTranscriptionAsync(id);
-            return success ? Ok(new { message }) : BadRequest(new { message });
+            // validate the episodeId
+            if (string.IsNullOrEmpty(id))
+            {
+                return BadRequest(new { message = "EpisodeId is required" });
+            }
+            var result = await _episodeService.SubmitTranscriptionAsync(id);
+            return result.success ? Ok(new { message = $"Transcription task submitted for {id}" }) : BadRequest(new { message = result.message });
+            
         }
 
         /// <summary>
@@ -129,7 +136,16 @@ namespace PodcastTranscribe.API.Controllers
         [HttpGet("{id}/transcription")]
         public async Task<IActionResult> GetTranscription(string id)
         {
-            var status = await _episodeService.GetTranscriptionStatusAsync(id);
+            if (string.IsNullOrEmpty(id))
+            {
+                return BadRequest(new { message = "EpisodeId is required" });
+            }
+            var episode = await _cosmosDbService.GetEpisodeByIdAsync(id);
+            if (episode == null)
+            {
+                return NotFound(new { message = $"Episode {id} not found" });
+            }
+            var status = await _azureSpeechHandlerService.GetTranscriptionStatusAsync(id);
             return Ok(new { status });
         }
     }

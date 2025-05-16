@@ -39,19 +39,26 @@ namespace PodcastTranscribe.API.Models
         /// Status of the transcription process
         /// </summary>
         [JsonProperty("transcription_status")]
-        public required TranscriptionStatus TranscriptionStatus { get; set; }
+        [Newtonsoft.Json.JsonConverter(typeof(Newtonsoft.Json.Converters.StringEnumConverter))]
+        public TranscriptionStatus TranscriptionStatus { get; set; }
 
         /// <summary>
         /// The transcribed text (if available)
         /// </summary>
-        [JsonProperty("transcription_text")]
-        public string? TranscriptionText { get; set; }
+        [JsonProperty("transcription_result_display")]
+        public string? TranscriptionResultDisplay { get; set; }
 
         /// <summary>
         /// Azure Blob Storage URI for the processed audio file
         /// </summary>
         [JsonProperty("processed_audio_blob_uri")]
         public string? ProcessedAudioBlobUri { get; set; }
+
+        /// <summary>
+        /// Azure Speech URI for the transcription result
+        /// </summary>
+        [JsonProperty("azure_speech_uri")]
+        public string? AzureSpeechURI { get; set; }
     }
 
     /// <summary>
@@ -61,7 +68,9 @@ namespace PodcastTranscribe.API.Models
     {
         NotStarted,
         Processing,
-        Completed,
+        TranscriptionSubmitted,
+        TranscriptionRunning,
+        TranscriptionSucceeded,
         Failed
     }
 }
