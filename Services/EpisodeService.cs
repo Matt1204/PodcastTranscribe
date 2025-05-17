@@ -16,22 +16,43 @@ namespace PodcastTranscribe.API.Services
         private readonly ITranscriptionSubmissionService _transcriptionSubmissionService;
         private readonly CosmosDbService _cosmosDbService;
         private readonly IAzureSpeechHandlerService _azureSpeechHandlerService;
+        private readonly IExternalPodcastSearchService _externalPodcastSearchService;
         public EpisodeService(
             ILogger<EpisodeService> logger,
             ITranscriptionSubmissionService transcriptionSubmissionService,
             CosmosDbService cosmosDbService,
-            IAzureSpeechHandlerService azureSpeechHandlerService)
+            IAzureSpeechHandlerService azureSpeechHandlerService,
+            IExternalPodcastSearchService externalPodcastSearchService
+            )
         {
             _logger = logger;
             _transcriptionSubmissionService = transcriptionSubmissionService;
             _cosmosDbService = cosmosDbService;
             _azureSpeechHandlerService = azureSpeechHandlerService;
-
+            _externalPodcastSearchService = externalPodcastSearchService;
         }
 
-        public Task<IEnumerable<Episode>> SearchEpisodesAsync(string name)
+        public async Task<List<EpisodeSummary>> SearchEpisodesAsync(string title)
         {
-            throw new NotImplementedException();
+            List<Episode> episodeDb = await _cosmosDbService.SearchEpisodesAsync(title);
+            if (episodeDb.Count == 0)
+            {
+                List<Episode> externalEpisodes = await _externalPodcastSearchService.SearchEpisodesByTitleAsync(title);
+                episodeDb.AddRange(externalEpisodes);
+            }
+            List<EpisodeSummary> episodeSummaryList = episodeDb.Select(episode => {
+                return new EpisodeSummary
+                {
+                    Id = episode.Id,
+                    Title = episode.Title,
+                    Description = episode.Description,
+                    TranscriptionStatus = episode.TranscriptionStatus
+                };
+            }).ToList();
+
+            // List<Episode> externalEpisodes = await _externalPodcastSearchService.SearchEpisodesByTitleAsync(title);
+
+            return episodeSummaryList;
         }
 
         public Task<Episode> GetEpisodeByIdAsync(string id)
@@ -69,20 +90,6 @@ namespace PodcastTranscribe.API.Services
             });
 
             return (true, "Transcription task submitted in progress");
-
-
-            // try
-            // {
-            //     _logger.LogInformation($"Submitting transcription for episode {episodeId}");
-            //     var result = await _transcriptionSubmissionService.ProcessTranscriptionSubmissionAsync(episodeId);
-            //     return (result.Success, result.Message);
-            // }
-            // catch (Exception ex)
-            // {
-            //     var errorMessage = $"Error submitting transcription for episode {episodeId}: {ex.Message}";
-            //     _logger.LogError(ex, errorMessage);
-            //     return (false, errorMessage);
-            // }
         }
 
         public async Task<TranscriptionResultResponse> GetTranscriptionResultAsync(string episodeId)

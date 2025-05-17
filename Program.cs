@@ -56,9 +56,8 @@ builder.Services.AddSingleton<CosmosClient>(sp =>
 });
 
 // CosmosDbService is a singleton, 1 instance created at startup.
-builder.Services.AddSingleton<CosmosDbService>();
-
 // Register Azure Blob Storage service as a singleton. AzureBlobStorageService instantiated.
+builder.Services.AddSingleton<CosmosDbService>();
 builder.Services.AddSingleton<IAzureBlobStorageService, AzureBlobStorageService>();
 
 // EpisodeService and IEpisodeService are scoped services, 
@@ -66,17 +65,20 @@ builder.Services.AddSingleton<IAzureBlobStorageService, AzureBlobStorageService>
 builder.Services.AddScoped<IEpisodeService, EpisodeService>();
 builder.Services.AddScoped<ITranscriptionSubmissionService, TranscriptionSubmissionService>();
 builder.Services.AddScoped<IAzureSpeechHandlerService, AzureSpeechHandlerService>();
-// Add configuration sections
+builder.Services.AddScoped<IExternalPodcastSearchService, ExternalPodcastSearchService>();
+// builder.Services.AddHttpClient<IExternalPodcastSearchService, ExternalPodcastSearchService>();
+
+// Add configuration sections to get the settings from the appsettings.json file.
 builder.Services.Configure<CosmosDbSettings>(
     builder.Configuration.GetSection("CosmosDb"));
 builder.Services.Configure<AzureBlobStorageSettings>(
     builder.Configuration.GetSection("AzureBlobStorage"));
 builder.Services.Configure<AzureSpeechSettings>(
     builder.Configuration.GetSection("AzureSpeech"));
+builder.Services.Configure<ListennotesSettings>(
+    builder.Configuration.GetSection("Listennotes"));
 
 
-
-// Learn more about configuring Swagger/OpenAPI at https://aka.ms/aspnetcore/swashbuckle
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
 

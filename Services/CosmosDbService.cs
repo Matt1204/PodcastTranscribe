@@ -21,14 +21,14 @@ namespace PodcastTranscribe.API.Services
             _logger = logger;
         }
 
-        public async Task<List<Episode>> SearchEpisodesAsync(string name)
+        public async Task<List<Episode>> SearchEpisodesAsync(string title)
         {
-            if (string.IsNullOrWhiteSpace(name))
+            if (string.IsNullOrWhiteSpace(title))
                 return new List<Episode>();
 
             var query = new QueryDefinition(
-                "SELECT * FROM c WHERE CONTAINS(UPPER(c.title), @name)")
-                .WithParameter("@name", name.ToUpperInvariant());
+                "SELECT * FROM c WHERE CONTAINS(UPPER(c.title), @title)")
+                .WithParameter("@title", title.ToUpperInvariant());
 
             var results = new List<Episode>();
             using var iterator = _dbContainer.GetItemQueryIterator<Episode>(query);
@@ -101,6 +101,42 @@ namespace PodcastTranscribe.API.Services
             }
         }
 
+        /// <summary>
+        /// Creates multiple episode items in Cosmos DB in a single transactional batch.
+        /// All episodes must have the same partition key (the same Id in this implementation).
+        /// If any operation in the batch fails, none of the items are created (atomic operation).
+        /// </summary>
+        /// <param name="episodes">List of episodes to create. All episodes should have the same Id (partition key).</param>
+        /// <returns>A task that represents the asynchronous batch create operation.</returns>
+        public async Task<List<Episode>> CreateEpisodeBatchAsync(List<Episode> episodes)
+        {
+            var partitionKey = new PartitionKey(episodes[0].Id);
+            var batch = _dbContainer.CreateTransactionalBatch(partitionKey);
+
+            List<Episode> episodesToCreate = new List<Episode>();
+            List<Episode> episodesExisting = new List<Episode>();
+            foreach (var episode in episodes)
+            {
+                var existingEpisode = await GetEpisodeByIdAsync(episode.Id);
+                if (existingEpisode != null)
+                {
+                    _logger.LogWarning($"Episode with ID {episode.Id} already exists. Skipping.");
+                    episodesExisting.Add(existingEpisode);
+                    continue;
+                }
+
+                batch.CreateItem(episode);
+                episodesToCreate.Add(episode);
+            }
+
+            if (episodesToCreate.Count > 0)
+            {
+                await batch.ExecuteAsync();
+            }
+
+            return episodesExisting.Concat(episodesToCreate).ToList();
+        }
+
         public async Task<Episode> UpdateEpisodeEntryAsync(
             string episodeId,
             string? transcriptionResultDisplay = null,
@@ -134,7 +170,7 @@ namespace PodcastTranscribe.API.Services
                 updates.Add($"transcriptionStatus: {transcriptionStatus.Value}");
             }
 
-            _logger.LogInformation($"Updating episode with ID: {episodeId}. Updates: {string.Join(", ", updates)}");
+            // _logger.LogInformation($"Updating episode with ID: {episodeId}. Updates: {string.Join(", ", updates)}");
 
             return await UpdateEpisodeAsync(episode);
         }

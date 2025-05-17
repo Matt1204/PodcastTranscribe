@@ -256,6 +256,7 @@ namespace PodcastTranscribe.API.Services
 
             var blobFileName = $"{episodeId}_audio.mp3";
             var blobUrl = await _azureBlobStorageService.UploadFileAsync(fileStream, blobFileName);
+            await _cosmosDbService.UpdateEpisodeEntryAsync(episodeId, processedAudioBlobUri: blobUrl.ToString());
             // returning the blob url
             return blobUrl.ToString();
             

@@ -103,13 +103,13 @@ namespace PodcastTranscribe.API.Controllers
         /// <summary>
         /// Searches for podcast episodes by name
         /// </summary>
-        /// <param name="name">The name to search for</param>
+        /// <param name="title">The name to search for</param>
         /// <returns>A list of matching episodes</returns>
         [HttpGet]
-        public async Task<IActionResult> SearchEpisodes([FromQuery] string name)
+        public async Task<IActionResult> SearchEpisodes([FromQuery] string title)
         {
-            var episodes = await _episodeService.SearchEpisodesAsync(name);
-            return Ok(episodes);
+            List<EpisodeSummary> result = await _episodeService.SearchEpisodesAsync(title);
+            return Ok(new { results = result });
         }
 
         /// <summary>
@@ -146,6 +146,10 @@ namespace PodcastTranscribe.API.Controllers
             if (episode == null)
             {
                 return NotFound(new { message = $"Episode {id} not found" });
+            }
+            if (episode.TranscriptionStatus == TranscriptionStatus.NotStarted)
+            {
+                return Ok(new { message = $"transcription job not submitted for episode {id}" });
             }
             TranscriptionResultResponse response = await _episodeService.GetTranscriptionResultAsync(id);
             return Ok(response);

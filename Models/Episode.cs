@@ -29,6 +29,12 @@ namespace PodcastTranscribe.API.Models
         /// </summary>
         [JsonProperty("description")]
         public required string Description { get; set; }
+        
+        /// <summary>
+        /// Unique identifier for the podcast
+        /// </summary>
+        [JsonProperty("podcast_id")]            
+        public string? PodcastId { get; set; }
 
         /// <summary>
         /// Public URL to the audio file

@@ -15,7 +15,7 @@ namespace PodcastTranscribe.API.Services
         /// </summary>
         /// <param name="name">The name to search for.</param>
         /// <returns>A collection of matching episodes.</returns>
-        Task<IEnumerable<Episode>> SearchEpisodesAsync(string name);
+        Task<List<EpisodeSummary>> SearchEpisodesAsync(string name);
 
         /// <summary>
         /// Retrieves an episode by its ID.
