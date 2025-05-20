@@ -40,7 +40,8 @@ namespace PodcastTranscribe.API.Services
                 List<Episode> externalEpisodes = await _externalPodcastSearchService.SearchEpisodesByTitleAsync(title);
                 episodeDb.AddRange(externalEpisodes);
             }
-            List<EpisodeSummary> episodeSummaryList = episodeDb.Select(episode => {
+            List<EpisodeSummary> episodeSummaryList = episodeDb.Select(episode =>
+            {
                 return new EpisodeSummary
                 {
                     Id = episode.Id,
@@ -66,30 +67,55 @@ namespace PodcastTranscribe.API.Services
             if (episode == null)
             {
                 _logger.LogError($"Episode {episodeId} not found");
-                return (false, $"Episode {episodeId} not found in db");
+                return (false, $"Episode {episodeId}: does not exist");
             }
-            // Trigger the transcription process asynchronously
-            _ = Task.Run(async () =>
-            {
-                try
-                {
-                    var (isSuccess, message) = await _transcriptionSubmissionService.ProcessTranscriptionSubmissionAsync(episode);
-                    if (isSuccess)
-                    {
-                        _logger.LogInformation($"!!! Transcription task submitted to Azure for episode {episodeId}");
-                    }
-                    else
-                    {
-                        _logger.LogError($"*** Error processing transcription for episode {episodeId}: {message}");
-                    }
-                }
-                catch (Exception e)
-                {
-                    _logger.LogError(e, $"*** Error processing transcription for episode {episodeId}");
-                }
-            });
 
-            return (true, "Transcription task submitted in progress");
+            if (episode.TranscriptionStatus == TranscriptionStatus.TranscriptionSucceeded && !string.IsNullOrEmpty(episode.TranscriptionResultDisplay))
+            {
+                _logger.LogInformation($"!!! Transcription already generated for episode {episodeId}");
+                return (true, $"Episode {episodeId}: Transcription already generated, no need to submit.");
+            }
+            else if (
+                episode.TranscriptionStatus == TranscriptionStatus.Processing ||
+                episode.TranscriptionStatus == TranscriptionStatus.TranscriptionSubmitted ||
+                episode.TranscriptionStatus == TranscriptionStatus.TranscriptionRunning
+                )
+            {
+                return (true, $"Episode {episodeId}: Transcription task is in progress, please check back later for results");
+            }
+            else if (episode.TranscriptionStatus == TranscriptionStatus.NotStarted)
+            {
+                // Trigger the transcription process asynchronously
+                _ = Task.Run(async () =>
+                {
+                    try
+                    {
+                        var (isSuccess, message) = await _transcriptionSubmissionService.ProcessTranscriptionSubmissionAsync(episode);
+                        if (isSuccess)
+                        {
+                            _logger.LogInformation($"!!! Transcription task submitted to Azure for episode {episodeId}");
+                        }
+                        else
+                        {
+                            _logger.LogError($"*** Error processing transcription for episode {episodeId}: {message}");
+                        }
+                    }
+                    catch (Exception e)
+                    {
+                        _logger.LogError(e, $"*** Error processing transcription for episode {episodeId}");
+                    }
+                });
+
+                return (true, $"Transcription task submitted for episode {episodeId}, please check back later for results");
+            }
+            else if (episode.TranscriptionStatus == TranscriptionStatus.Failed)
+            {
+                return (false, $"Transcription task failed for episode {episodeId}");
+            }
+            else
+            {
+                return (false, $"Unknown transcription status for episode {episodeId}");
+            }
         }
 
         public async Task<TranscriptionResultResponse> GetTranscriptionResultAsync(string episodeId)

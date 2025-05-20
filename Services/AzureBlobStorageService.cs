@@ -11,6 +11,8 @@ public interface IAzureBlobStorageService
     Task<Uri> UploadFileAsync(Stream fileStream, string fileName);
     Task<Stream> DownloadFileAsync(string fileName);
     Task DeleteFileAsync(string fileName);
+    Task<bool> FileExistsAsync(string fileName);
+    Task<string> GetFileUrlAsync(string fileName);
 }
 
 public class AzureBlobStorageService : IAzureBlobStorageService
@@ -19,7 +21,9 @@ public class AzureBlobStorageService : IAzureBlobStorageService
     private readonly string _containerName;
     private BlobContainerClient? _containerClient;
     private readonly ILogger<AzureBlobStorageService> _logger;
-    public AzureBlobStorageService(IOptions<AzureBlobStorageSettings> blobSettings, ILogger<AzureBlobStorageService> logger)
+    public AzureBlobStorageService(
+        IOptions<AzureBlobStorageSettings> blobSettings,
+        ILogger<AzureBlobStorageService> logger)
     {
         _logger = logger;
         _blobServiceClient = new BlobServiceClient(blobSettings.Value.ConnectionString);
@@ -63,7 +67,8 @@ public class AzureBlobStorageService : IAzureBlobStorageService
         return blobClient.Uri;
     }
 
-    public async Task<Stream> downloadFileUrlAsync(string url){
+    public async Task<Stream> downloadFileUrlAsync(string url)
+    {
         var httpClient = new HttpClient();
         var response = await httpClient.GetAsync(url);
         return await response.Content.ReadAsStreamAsync();
@@ -78,6 +83,24 @@ public class AzureBlobStorageService : IAzureBlobStorageService
         var response = await blobClient.DownloadAsync();
         _logger.LogInformation($"*** Downloaded file from blob storage: {fileName}");
         return response.Value.Content;
+    }
+
+    public async Task<string> GetFileUrlAsync(string fileName)
+    {
+        if (_containerClient == null)
+            throw new InvalidOperationException("Blob storage not initialized");
+
+        var blobClient = _containerClient.GetBlobClient(fileName);
+        return blobClient.Uri.ToString();
+    }
+
+    public async Task<bool> FileExistsAsync(string fileName)
+    {
+        if (_containerClient == null)
+            throw new InvalidOperationException("Blob storage not initialized");
+
+        var blobClient = _containerClient.GetBlobClient(fileName);
+        return await blobClient.ExistsAsync();
     }
 
     public async Task DeleteFileAsync(string fileName)

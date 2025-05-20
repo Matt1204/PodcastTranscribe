@@ -16,12 +16,18 @@ using System.Text;
 
 namespace PodcastTranscribe.API.Services
 {
+    /// <summary>
+    /// Represents the result of a transcription submission.
+    /// </summary>
     public class TranscriptionSubmissionResult
     {
         public bool Success { get; set; }
         public string Message { get; set; }
     }
 
+    /// <summary>
+    /// Handles the workflow for submitting audio for transcription.
+    /// </summary>
     public class TranscriptionSubmissionService : ITranscriptionSubmissionService
     {
         private readonly ILogger<TranscriptionSubmissionService> _logger;
@@ -31,6 +37,12 @@ namespace PodcastTranscribe.API.Services
         private readonly AzureSpeechSettings _azureSpeechSettings;
         private readonly HttpClient _httpClient;
         private readonly IAzureSpeechHandlerService _azureSpeechHandlerService;
+        // Use named constants for magic numbers
+        private const int MaxDownloadBytes = 10 * 1024 * 1024; // 10 MB
+        private const int DownloadBufferSize = 8192;
+        private const int AudioBitrateKbps = 16;
+        private const int AudioSampleRate = 22050;
+
         public TranscriptionSubmissionService(
             ILogger<TranscriptionSubmissionService> logger,
             CosmosDbService cosmosDbService,
@@ -50,7 +62,7 @@ namespace PodcastTranscribe.API.Services
         }
 
         /// <summary>
-        /// Master function to handle the complete transcription submission workflow
+        /// Master function to handle the complete transcription submission workflow.
         /// </summary>
         /// <param name="audioUrl">The ID of the episode to process</param>
         /// <returns>A result containing success status and message</returns>
@@ -58,35 +70,47 @@ namespace PodcastTranscribe.API.Services
         {
             string audioFilePath = null;
             string processedAudioPath = null;
+            string blobUrl = null;
 
             try
             {
-                _logger.LogInformation($"*** Starting transcription submission process for episode {episode.Id}");
+                await _cosmosDbService.UpdateEpisodeEntryAsync(episode.Id, transcriptionStatus: TranscriptionStatus.Processing);
+                _logger.LogInformation($"Starting transcription submission for episode {episode.Id}");
 
-                // Step 1: Download audio file
-                audioFilePath = await DownloadAudioFileAsync(episode.AudioUrl);
-                if (string.IsNullOrEmpty(audioFilePath))
+                // Check if audio file already exists in blob storage
+                var blobFileExists = await _azureBlobStorageService.FileExistsAsync(generateAudioFileName(episode.Id));
+
+                if (blobFileExists)
                 {
-                    var errorMessage = $"*** Failed to download audio for episode {episode.Id}";
-                    _logger.LogError(errorMessage);
-                    return (false, errorMessage);
+                    _logger.LogInformation($"Audio file already exists in blob storage for episode {episode.Id}");
+                    blobUrl = await _azureBlobStorageService.GetFileUrlAsync(generateAudioFileName(episode.Id));
                 }
-
-                // Step 2: Process audio file (reduce bitrate)
-                processedAudioPath = await ProcessAudioFileAsync(audioFilePath);
-                if (string.IsNullOrEmpty(processedAudioPath))
+                else
                 {
-                    var errorMessage = $"*** Failed to process audio for episode {episode.Id}";
-                    _logger.LogError(errorMessage);
-                    return (false, errorMessage);
-                }
+                    _logger.LogInformation($"Audio file does not exist in blob storage for episode {episode.Id}");
+                    // Step 1: Download audio file
+                    audioFilePath = await DownloadAudioFileAsync(episode.AudioUrl);
+                    if (string.IsNullOrEmpty(audioFilePath))
+                    {
+                        var errorMessage = $"Failed to download audio for episode {episode.Id}";
+                        _logger.LogError(errorMessage);
+                        return (false, errorMessage);
+                    }
 
-                // Step 3: Upload audio to Azure Blob Storage (to be implemented)
-                // TODO: Implement blob storage upload
-                var blobUrl = await UploadToBlobStorageAsync(processedAudioPath, episode.Id);
+                    // Step 2: Process audio file (reduce bitrate)
+                    processedAudioPath = await ProcessAudioFileAsync(audioFilePath);
+                    if (string.IsNullOrEmpty(processedAudioPath))
+                    {
+                        var errorMessage = $"Failed to process audio for episode {episode.Id}";
+                        _logger.LogError(errorMessage);
+                        return (false, errorMessage);
+                    }
+
+                    // Step 3: Upload audio to Azure Blob Storage
+                    blobUrl = await UploadToBlobStorageAsync(processedAudioPath, episode.Id);
+                }
 
                 // Step 4: Submit transcription to Azure Speech Service
-                // var transcriptionUrl = await SubmitTranscriptionToAzureAsync(blobUrl, episode.Id);
                 var transcriptionUrl = await _azureSpeechHandlerService.SubmitTranscriptionToAzureAsync(blobUrl, episode.Id);
 
                 return (true, "Transcription task submitted");
@@ -95,6 +119,8 @@ namespace PodcastTranscribe.API.Services
             {
                 var errorMessage = $"Error processing transcription submission for episode {episode.Id}: {ex.Message}";
                 _logger.LogError(ex, errorMessage);
+                // Update episode status to Failed if an error occurs
+                await _cosmosDbService.UpdateEpisodeEntryAsync(episode.Id, transcriptionStatus: TranscriptionStatus.Failed);
                 return (false, errorMessage);
             }
             finally
@@ -104,6 +130,9 @@ namespace PodcastTranscribe.API.Services
             }
         }
 
+        /// <summary>
+        /// Downloads an audio file from a URL, saving only the first 10MB for processing.
+        /// </summary>
         private async Task<string> DownloadAudioFileAsync(string audioUrl)
         {
             string tempFilePath = null;
@@ -111,66 +140,52 @@ namespace PodcastTranscribe.API.Services
             {
                 // Create a temporary file path
                 tempFilePath = Path.Combine(Path.GetTempPath(), $"podcast_{Guid.NewGuid()}.mp3");
-                
                 using (var client = new HttpClient())
                 {
-                    // Set timeout to 30 minutes for large files
                     client.Timeout = TimeSpan.FromMinutes(30);
-
                     // Set a browser-like User-Agent header to avoid 403 Forbidden
                     client.DefaultRequestHeaders.UserAgent.ParseAdd("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/113.0.0.0 Safari/537.36");
-
                     // Request only the first 10 MB of the file
-                    var maxBytes = 10 * 1024 * 1024;
-                    client.DefaultRequestHeaders.Range = new RangeHeaderValue(0, maxBytes - 1);
-
-                    // Get file size first
-                    var response = await client.GetAsync(audioUrl, HttpCompletionOption.ResponseHeadersRead);
+                    client.DefaultRequestHeaders.Range = new RangeHeaderValue(0, MaxDownloadBytes - 1);
+                    var response = await client.GetAsync(audioUrl, HttpCompletionOption.ResponseHeadersRead).ConfigureAwait(false);
                     response.EnsureSuccessStatusCode();
                     var fileSize = response.Content.Headers.ContentLength ?? -1;
-                    
-                    _logger.LogInformation($"... Starting download of {fileSize / (1024 * 1024)}MB file from {audioUrl}");
-                    
-                    using (var stream = await response.Content.ReadAsStreamAsync())
+                    _logger.LogInformation($"Starting download of {fileSize / (1024 * 1024)}MB file from {audioUrl}");
+                    using (var stream = await response.Content.ReadAsStreamAsync().ConfigureAwait(false))
                     using (var fileStream = new FileStream(tempFilePath, FileMode.Create, FileAccess.Write, FileShare.None))
                     {
-                        var buffer = new byte[8192];
+                        var buffer = new byte[DownloadBufferSize];
                         var totalBytesRead = 0L;
                         int bytesRead;
-                        
-                        while ((bytesRead = await stream.ReadAsync(buffer, 0, buffer.Length)) > 0)
+                        while ((bytesRead = await stream.ReadAsync(buffer, 0, buffer.Length).ConfigureAwait(false)) > 0)
                         {
-                            await fileStream.WriteAsync(buffer, 0, bytesRead);
+                            await fileStream.WriteAsync(buffer, 0, bytesRead).ConfigureAwait(false);
                             totalBytesRead += bytesRead;
-                            
-                            if (totalBytesRead % (10 * 1024 * 1024) == 0)
+                            // Log progress every 1MB
+                            if (totalBytesRead % (1 * 1024 * 1024) < DownloadBufferSize)
                             {
-                                var progress = (double)totalBytesRead / fileSize * 100;
-                                _logger.LogInformation($"...downloading... Download progress: {progress:F1}%");
-
-                            if (totalBytesRead >= maxBytes)
-                            {
-                                _logger.LogInformation($"...Reached 15MB partial download limit; stopping download.");
-                                break;
+                                var progress = fileSize > 0 ? (double)totalBytesRead / fileSize * 100 : 0;
+                                _logger.LogInformation($"Download progress: {progress:F1}%");
                             }
+                            if (totalBytesRead >= MaxDownloadBytes)
+                            {
+                                _logger.LogInformation($"Reached 10MB partial download limit; stopping download.");
+                                break;
                             }
                         }
                     }
                 }
-                
                 // Verify file exists and has content
                 var fileInfo = new FileInfo(tempFilePath);
                 if (!fileInfo.Exists || fileInfo.Length == 0)
                 {
                     throw new Exception("Downloaded file is empty or does not exist");
                 }
-
                 // Save debug copy
                 var debugFilePath = Path.Combine(_debugDirectory, $"original_demo_{Path.GetFileName(tempFilePath)}");
                 File.Copy(tempFilePath, debugFilePath, true);
-                _logger.LogInformation($"... Saved debug copy to: {debugFilePath}");
-
-                _logger.LogInformation($"... Successfully downloaded {fileInfo.Length / (1024 * 1024)}MB file to {tempFilePath}");
+                _logger.LogInformation($"Saved debug copy to: {debugFilePath}");
+                _logger.LogInformation($"Successfully downloaded {fileInfo.Length / (1024 * 1024)}MB file to {tempFilePath}");
                 return tempFilePath;
             }
             catch (Exception ex)
@@ -184,58 +199,47 @@ namespace PodcastTranscribe.API.Services
             }
         }
 
+        /// <summary>
+        /// Processes the audio file to reduce bitrate and sample rate for efficient transcription.
+        /// </summary>
         private async Task<string> ProcessAudioFileAsync(string inputFilePath)
         {
             string processedFilePath = null;
             try
             {
-                // Get original file size
                 var originalFileInfo = new FileInfo(inputFilePath);
                 var originalSizeMB = originalFileInfo.Length / (1024.0 * 1024.0);
-                _logger.LogInformation($"... Original file size: {originalSizeMB:F2}MB");
-
-                // Create output path
-                processedFilePath = Path.Combine(
-                    Path.GetTempPath(),
-                    $"processed_{Path.GetFileName(inputFilePath)}"
-                );
-
-                // Get media info
-                // The name 'FFmpeg' does not exist in the current contextCS0103, solved by adding using Xabe.FFmpeg;
-                var mediaInfo = await FFmpeg.GetMediaInfo(inputFilePath);
-                var audioStream = mediaInfo.AudioStreams.First();
-
-                // Convert audio with reduced bitrate, lower sample rate, and force mono (single-pass)
+                _logger.LogInformation($"Original file size: {originalSizeMB:F2}MB");
+                processedFilePath = Path.Combine(Path.GetTempPath(), $"processed_{Path.GetFileName(inputFilePath)}");
+                var mediaInfo = await FFmpeg.GetMediaInfo(inputFilePath).ConfigureAwait(false);
+                var audioStream = mediaInfo.AudioStreams.FirstOrDefault();
+                if (audioStream == null)
+                {
+                    throw new Exception("No audio stream found in file");
+                }
+                // Convert audio with reduced bitrate, lower sample rate, and force mono
                 var conversion = FFmpeg.Conversions.New()
                     .AddStream(audioStream)
-                    .SetAudioBitrate(16)            // lower to 16 kbps
-                    .AddParameter("-ac 1")          // force mono 
-                    .AddParameter("-ar 22050")       // set sample rate to 22.05 kHz
+                    .SetAudioBitrate(AudioBitrateKbps)
+                    .AddParameter("-ac 1")
+                    .AddParameter($"-ar {AudioSampleRate}")
                     .SetOutput(processedFilePath);
-
                 // Add progress reporting
                 conversion.OnProgress += (sender, args) =>
                 {
-                    var percent = (int)(Math.Round(args.Duration.TotalSeconds / args.TotalLength.TotalSeconds, 2) * 100);
-                    _logger.LogInformation($"... Processing progress: {percent}%");
+                    var percent = args.TotalLength.TotalSeconds > 0 ? (int)(args.Duration.TotalSeconds / args.TotalLength.TotalSeconds * 100) : 0;
+                    _logger.LogInformation($"Processing progress: {percent}%");
                 };
-
-                // Start conversion
-                await conversion.Start();
-
-                // Get processed file size
+                await conversion.Start().ConfigureAwait(false);
                 var processedFileInfo = new FileInfo(processedFilePath);
                 var processedSizeMB = processedFileInfo.Length / (1024.0 * 1024.0);
                 var reductionPercentage = ((originalSizeMB - processedSizeMB) / originalSizeMB) * 100;
-                
-                _logger.LogInformation($"... Processed file size: {processedSizeMB:F2}MB");
-                _logger.LogInformation($"... Size reduction: {reductionPercentage:F1}%");
-
+                _logger.LogInformation($"Processed file size: {processedSizeMB:F2}MB");
+                _logger.LogInformation($"Size reduction: {reductionPercentage:F1}%");
                 // Save debug copy
                 var debugFilePath = Path.Combine(_debugDirectory, $"processed_demo_{Path.GetFileName(processedFilePath)}");
                 File.Copy(processedFilePath, debugFilePath, true);
-                _logger.LogInformation($"... Saved debug copy to: {debugFilePath}");
-
+                _logger.LogInformation($"Saved debug copy to: {debugFilePath}");
                 return processedFilePath;
             }
             catch (Exception ex)
@@ -249,76 +253,24 @@ namespace PodcastTranscribe.API.Services
             }
         }
 
-        private async Task<string> UploadToBlobStorageAsync(string filePath, string episodeId){
-            // reading the file as stream
-            var fileStream = File.OpenRead(filePath);
-            // uploading the file to blob storage, use audioUrl as the file name
-
-            var blobFileName = $"{episodeId}_audio.mp3";
-            var blobUrl = await _azureBlobStorageService.UploadFileAsync(fileStream, blobFileName);
-            await _cosmosDbService.UpdateEpisodeEntryAsync(episodeId, processedAudioBlobUri: blobUrl.ToString());
-            // returning the blob url
-            return blobUrl.ToString();
-            
-        }
-
-        private async Task<string> SubmitTranscriptionToAzureAsync(string blobAudioURL, string episodeId)
+        /// <summary>
+        /// Uploads the processed audio file to Azure Blob Storage.
+        /// </summary>
+        private async Task<string> UploadToBlobStorageAsync(string filePath, string episodeId)
         {
-            try
+            // Open the file as a stream and upload
+            using (var fileStream = File.OpenRead(filePath))
             {
-                var requestUrl = $"https://{_azureSpeechSettings.Region}.api.cognitive.microsoft.com/speechtotext/{_azureSpeechSettings.ApiVersion}/transcriptions";
-                // var requestUrl = "https://eastus.api.cognitive.microsoft.com/speechtotext/v3.2/transcriptions";
-
-                _logger.LogInformation($"URL: {requestUrl}");
-                var requestBody = new
-                {
-                    displayName = $"{episodeId}-transcription",
-                    locale = "en-US",
-                    contentUrls = new[] { blobAudioURL },
-                    // model = (string)null,
-                    properties = new
-                    {
-                        wordLevelTimestampsEnabled = false,
-                        languageIdentification = new
-                        {
-                            candidateLocales = new[] { "zh-CN", "en-US" }
-                        }
-                    }
-                };
-
-
-                var jsonContent = JsonSerializer.Serialize(requestBody);
-                var content = new StringContent(jsonContent, Encoding.UTF8, "application/json");
-
-                // _httpClient.DefaultRequestHeaders.Clear();
-                _httpClient.DefaultRequestHeaders.Add("Ocp-Apim-Subscription-Key", _azureSpeechSettings.SubscriptionKey);
-                // _httpClient.DefaultRequestHeaders.Add("Content-Type", "application/json");
-                _logger.LogInformation($"subscription key: {_azureSpeechSettings.SubscriptionKey}");
-                var response = await _httpClient.PostAsync(requestUrl, content);
-                if(!response.IsSuccessStatusCode){
-                    var statusCode = response.StatusCode;
-                    var errorMessage = $"**** Failed to submit transcription to Azure Speech Service: {response.ReasonPhrase}, status code: {statusCode}";
-                    _logger.LogError(errorMessage);
-                    throw new Exception(errorMessage);
-                }
-
-
-                var resJsonStr = await response.Content.ReadAsStringAsync();
-                var resBody = JsonSerializer.Deserialize<JsonElement>(resJsonStr);
-                
-                // Extract the self URL from the response which contains the transcription ID
-                var selfUrl = resBody.GetProperty("self").GetString();
-                
-                _logger.LogInformation($"!!! Successfully submitted transcription request. Self URL: {selfUrl}");
-                
-                return selfUrl;
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Failed to submit transcription to Azure Speech Service");
-                throw;
+                var blobFileName = generateAudioFileName(episodeId);
+                var blobUrl = await _azureBlobStorageService.UploadFileAsync(fileStream, blobFileName).ConfigureAwait(false);
+                await _cosmosDbService.UpdateEpisodeEntryAsync(episodeId, processedAudioBlobUri: blobUrl.ToString());
+                return blobUrl.ToString();
             }
         }
+
+        /// <summary>
+        /// Deletes temporary files used during processing.
+        /// </summary>
         private void CleanupTemporaryFiles(params string[] filePaths)
         {
             foreach (var path in filePaths)
@@ -328,7 +280,7 @@ namespace PodcastTranscribe.API.Services
                     if (!string.IsNullOrEmpty(path) && File.Exists(path))
                     {
                         File.Delete(path);
-                        _logger.LogInformation($"... Cleaned up temporary file: {path}");
+                        _logger.LogInformation($"Cleaned up temporary file: {path}");
                     }
                 }
                 catch (Exception ex)
@@ -336,6 +288,14 @@ namespace PodcastTranscribe.API.Services
                     _logger.LogWarning(ex, $"Failed to delete temporary file: {path}");
                 }
             }
+        }
+
+        /// <summary>
+        /// Generates a consistent audio file name for blob storage.
+        /// </summary>
+        private string generateAudioFileName(string episodeId)
+        {
+            return $"{episodeId}_audio.mp3";
         }
     }
 }

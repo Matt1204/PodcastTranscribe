@@ -17,7 +17,8 @@ namespace PodcastTranscribe.API.Services
 
         public CosmosDbService(CosmosClient cosmosClient, IOptions<CosmosDbSettings> settings, ILogger<CosmosDbService> logger)
         {
-            _dbContainer = cosmosClient.GetContainer(settings.Value.DatabaseName, settings.Value.ContainerName);
+            var cosmosSettings = settings.Value;
+            _dbContainer = cosmosClient.GetContainer(cosmosSettings.DatabaseName, cosmosSettings.ContainerName);
             _logger = logger;
         }
 
@@ -101,40 +102,38 @@ namespace PodcastTranscribe.API.Services
             }
         }
 
-        /// <summary>
-        /// Creates multiple episode items in Cosmos DB in a single transactional batch.
-        /// All episodes must have the same partition key (the same Id in this implementation).
-        /// If any operation in the batch fails, none of the items are created (atomic operation).
-        /// </summary>
-        /// <param name="episodes">List of episodes to create. All episodes should have the same Id (partition key).</param>
-        /// <returns>A task that represents the asynchronous batch create operation.</returns>
         public async Task<List<Episode>> CreateEpisodeBatchAsync(List<Episode> episodes)
         {
-            var partitionKey = new PartitionKey(episodes[0].Id);
-            var batch = _dbContainer.CreateTransactionalBatch(partitionKey);
+            List<Episode> createdEpisodes = new();
 
-            List<Episode> episodesToCreate = new List<Episode>();
-            List<Episode> episodesExisting = new List<Episode>();
             foreach (var episode in episodes)
             {
                 var existingEpisode = await GetEpisodeByIdAsync(episode.Id);
                 if (existingEpisode != null)
                 {
                     _logger.LogWarning($"Episode with ID {episode.Id} already exists. Skipping.");
-                    episodesExisting.Add(existingEpisode);
+                    createdEpisodes.Add(existingEpisode);
                     continue;
                 }
 
-                batch.CreateItem(episode);
-                episodesToCreate.Add(episode);
+                try
+                {
+                    var response = await _dbContainer.CreateItemAsync(
+                        episode,
+                        new PartitionKey(episode.Id),
+                        new ItemRequestOptions { EnableContentResponseOnWrite = true });
+
+                    createdEpisodes.Add(response.Resource);
+                    _logger.LogInformation($"Created episode with ID: {episode.Id}");
+                }
+                catch (CosmosException ex)
+                {
+                    _logger.LogError(ex, $"Failed to create episode with ID: {episode.Id}");
+                    // Optionally continue or throw depending on desired behavior
+                }
             }
 
-            if (episodesToCreate.Count > 0)
-            {
-                await batch.ExecuteAsync();
-            }
-
-            return episodesExisting.Concat(episodesToCreate).ToList();
+            return createdEpisodes;
         }
 
         public async Task<Episode> UpdateEpisodeEntryAsync(

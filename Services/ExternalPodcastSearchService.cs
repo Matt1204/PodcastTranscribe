@@ -9,8 +9,9 @@ namespace PodcastTranscribe.API.Services
     {
         private readonly ILogger<ExternalPodcastSearchService> _logger;
         private readonly HttpClient _httpClient;
-        private readonly ListennotesSettings _listennotesSettings;
+        private readonly string _listennotesApiKey;
         private readonly CosmosDbService _cosmosDbService;
+        private readonly string _listennotesEndPoint;
         public ExternalPodcastSearchService(
             ILogger<ExternalPodcastSearchService> logger,
             IOptions<ListennotesSettings> listennotesSettings,
@@ -18,16 +19,17 @@ namespace PodcastTranscribe.API.Services
         )
         {
             _logger = logger;
-            _listennotesSettings = listennotesSettings.Value;
+            _listennotesApiKey = listennotesSettings.Value.ApiKey;
+            _listennotesEndPoint = listennotesSettings.Value.EndPoint;
             _httpClient = new HttpClient();
-            _httpClient.DefaultRequestHeaders.Add("X-ListenAPI-Key", _listennotesSettings.ApiKey);
+            _httpClient.DefaultRequestHeaders.Add("X-ListenAPI-Key", _listennotesApiKey);
             _cosmosDbService = cosmosDbService;
         }
 
         public async Task<List<Episode>> SearchEpisodesByTitleAsync(string titleQuery)
         {
-            string url = $"https://listen-api-test.listennotes.com/api/v2/search_episode_titles?q={titleQuery}";
-            var key = _listennotesSettings.ApiKey;
+            string url = $"{_listennotesEndPoint}/api/v2/search_episode_titles?q={titleQuery}";
+
             var response = await _httpClient.GetAsync(url);
             if (!response.IsSuccessStatusCode)
             {

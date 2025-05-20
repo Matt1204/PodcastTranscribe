@@ -126,7 +126,7 @@ namespace PodcastTranscribe.API.Controllers
                 return BadRequest(new { message = "EpisodeId is required" });
             }
             var result = await _episodeService.SubmitTranscriptionAsync(id);
-            return result.success ? Ok(new { message = $"Transcription task submitted for {id}" }) : BadRequest(new { message = result.message });
+            return result.success ? Ok(new { message = result.message }) : BadRequest(new { message = result.message });
             
         }
 

@@ -8,6 +8,7 @@ using PodcastTranscribe.API.Services;
 using Microsoft.OpenApi.Models;
 using PodcastTranscribe.API.Configuration;
 using Newtonsoft.Json.Converters;
+using DotNetEnv; // For loading .env files in development
 
 
 // Dependency Injection (DI) in ASP.NET Core:
@@ -19,6 +20,7 @@ using Newtonsoft.Json.Converters;
 // not use DI (instantiate services directly in controllers) for simple, stateless services (helper)
 
 
+Env.Load(); // Load environment variables from .env
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -35,14 +37,19 @@ builder.Services
 // all controllers are registered here.
 builder.Services.AddControllers();
 
-// Configure Azure Settings
-// Removed unused AzureSettings configuration, as it is not used.
+// get Cosmos DB credentials from environment variables
+builder.Services.Configure<CosmosDbSettings>(options =>
+{
+    options.ConnectionString = Environment.GetEnvironmentVariable("COSMOS_CONNECTION_STRING");
+    options.DatabaseName = Environment.GetEnvironmentVariable("COSMOS_DB_NAME");
+    options.ContainerName = Environment.GetEnvironmentVariable("COSMOS_CONTAINER_NAME");
+});
 
 // Configure Cosmos DB
 builder.Services.AddSingleton<CosmosClient>(sp =>
 {
-    var configuration = sp.GetRequiredService<IConfiguration>();
-    var options = new CosmosClientOptions
+    var cosmosSettings = sp.GetRequiredService<IOptions<CosmosDbSettings>>().Value;
+    var cosmosClientOptions = new CosmosClientOptions
     {
         SerializerOptions = new CosmosSerializationOptions
         {
@@ -50,34 +57,58 @@ builder.Services.AddSingleton<CosmosClient>(sp =>
         }
     };
     return new CosmosClient(
-        connectionString: configuration.GetValue<string>("CosmosDb:ConnectionString"),
-        options
+        cosmosSettings.ConnectionString,
+        cosmosClientOptions
     );
 });
 
 // CosmosDbService is a singleton, 1 instance created at startup.
 // Register Azure Blob Storage service as a singleton. AzureBlobStorageService instantiated.
 builder.Services.AddSingleton<CosmosDbService>();
+
+// get Azure Blob Storage credentials from environment variables
+builder.Services.Configure<AzureBlobStorageSettings>(options =>
+{
+    options.ConnectionString = Environment.GetEnvironmentVariable("BLOB_CONNECTION_STRING");
+    options.ContainerName = Environment.GetEnvironmentVariable("BLOB_CONTAINER_NAME");
+});
 builder.Services.AddSingleton<IAzureBlobStorageService, AzureBlobStorageService>();
 
 // EpisodeService and IEpisodeService are scoped services, 
 // 1 instance per HTTP request.
 builder.Services.AddScoped<IEpisodeService, EpisodeService>();
 builder.Services.AddScoped<ITranscriptionSubmissionService, TranscriptionSubmissionService>();
-builder.Services.AddScoped<IAzureSpeechHandlerService, AzureSpeechHandlerService>();
-builder.Services.AddScoped<IExternalPodcastSearchService, ExternalPodcastSearchService>();
-// builder.Services.AddHttpClient<IExternalPodcastSearchService, ExternalPodcastSearchService>();
 
-// Add configuration sections to get the settings from the appsettings.json file.
-builder.Services.Configure<CosmosDbSettings>(
-    builder.Configuration.GetSection("CosmosDb"));
-builder.Services.Configure<AzureBlobStorageSettings>(
-    builder.Configuration.GetSection("AzureBlobStorage"));
-builder.Services.Configure<AzureSpeechSettings>(
-    builder.Configuration.GetSection("AzureSpeech"));
-builder.Services.Configure<ListennotesSettings>(
-    builder.Configuration.GetSection("Listennotes"));
+// get Azure Speech credentials from environment variables
+builder.Services.Configure<AzureSpeechSettings>(options =>
+{
+    options.SubscriptionKey = Environment.GetEnvironmentVariable("AZURE_SPEECH_KEY");
+    options.Region = Environment.GetEnvironmentVariable("AZURE_SPEECH_REGION");
+    options.ApiVersion = Environment.GetEnvironmentVariable("AZURE_SPEECH_API_VERSION");
+});
+// Register AzureSpeechHandlerService with credentials from environment
+builder.Services.AddScoped<IAzureSpeechHandlerService, AzureSpeechHandlerService>(sp =>
+    new AzureSpeechHandlerService(
+        sp.GetRequiredService<ILogger<AzureSpeechHandlerService>>(),
+        sp.GetRequiredService<IAzureBlobStorageService>(),
+        sp.GetRequiredService<IOptions<AzureSpeechSettings>>(),
+        sp.GetRequiredService<CosmosDbService>()
+    )
+);
 
+builder.Services.Configure<ListennotesSettings>(options =>
+{
+    options.ApiKey = Environment.GetEnvironmentVariable("LISTENNOTES_API_KEY");
+    options.EndPoint = Environment.GetEnvironmentVariable("LISTENNOTES_END_POINT");
+});
+// Register ExternalPodcastSearchService with API key from environment
+builder.Services.AddScoped<IExternalPodcastSearchService, ExternalPodcastSearchService>(sp =>
+    new ExternalPodcastSearchService(
+        sp.GetRequiredService<ILogger<ExternalPodcastSearchService>>(),
+        sp.GetRequiredService<IOptions<ListennotesSettings>>(),
+        sp.GetRequiredService<CosmosDbService>()
+    )
+);
 
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
@@ -91,6 +122,7 @@ if (app.Environment.IsDevelopment())
     app.UseSwaggerUI();
 }
 
+//
 app.Lifetime.ApplicationStarted.Register(async () =>
 {
     var logger = app.Services.GetRequiredService<ILogger<Program>>();
@@ -124,6 +156,7 @@ app.UseAuthorization();
 app.MapControllers();
 
 app.MapGet("/", () => "API is running");
-app.Urls.Add("http://localhost:5050");
-app.Urls.Add("https://localhost:7050");
+// app.Urls.Add("http://localhost:5050");
+app.Urls.Add("http://0.0.0.0:5050");
+// app.Urls.Add("https://localhost:7050");
 app.Run();
